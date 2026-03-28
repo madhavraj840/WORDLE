@@ -1,0 +1,1060 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>WORDLE</title>
+
+  <!-- ══════════════════════════════════════════════════════════
+       POKI SDK — load first, before any other script
+  ══════════════════════════════════════════════════════════ -->
+  <script src="https://game-cdn.poki.com/scripts/v2/poki-sdk.js"></script>
+
+  <style>
+    /* ═══════════════════════════════════════════════════════
+       DESIGN SYSTEM
+       Brutalist / editorial newspaper aesthetic.
+       Sharp corners throughout — no border-radius, no gradients,
+       no purple / soft AI colour palettes.
+    ═══════════════════════════════════════════════════════ */
+    :root {
+      --bg:          #0e0e0e;
+      --surface:     #1a1a1a;
+      --border:      #333;
+      --border-hi:   #888;
+      --text:        #f2f2f2;
+      --muted:       #666;
+      --green:       #3d7a36;
+      --yellow:      #9e8020;
+      --absent:      #2e2e2e;
+      --absent-txt:  #4a4a4a;
+      --key-bg:      #2a2a2a;
+      --tile-size:   min(60px, calc((100vw - 40px) / 5));
+      --tile-font:   clamp(1.4rem, 3.5vw, 1.9rem);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Trebuchet MS', 'Helvetica Neue', sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* ─────────────────────────────────────────────────────
+       LOADING SCREEN
+    ───────────────────────────────────────────────────── */
+    #loading-screen {
+      position: fixed; inset: 0;
+      background: var(--bg);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 999; gap: 24px;
+    }
+
+    .ld-title {
+      font-family: Impact, 'Arial Narrow', sans-serif;
+      font-size: clamp(4rem, 15vw, 8rem);
+      letter-spacing: 0.2em; text-transform: uppercase;
+      color: var(--text);
+    }
+
+    .ld-rule { width: min(240px,70vw); height: 3px; background: var(--text); }
+
+    .ld-sub {
+      font-family: 'Courier New', monospace;
+      font-size: 0.65rem; letter-spacing: 0.35em;
+      color: var(--muted); text-transform: uppercase;
+    }
+
+    #prog-track { width: min(240px,70vw); height: 3px; background: #2a2a2a; }
+    #prog-fill  { height: 100%; width: 0%; background: var(--text); transition: width .18s linear; }
+    #prog-pct   {
+      font-family: 'Courier New', monospace;
+      font-size: 0.65rem; letter-spacing: 0.25em;
+      color: var(--muted); text-align: center; margin-top: 6px;
+    }
+
+    /* ─────────────────────────────────────────────────────
+       GAME LAYOUT
+    ───────────────────────────────────────────────────── */
+    #game {
+      display: none; height: 100%;
+      flex-direction: column; align-items: center;
+    }
+
+    /* Header */
+    #header {
+      width: 100%; max-width: 500px;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px;
+      border-bottom: 2px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    #game-title {
+      font-family: Impact, 'Arial Narrow', sans-serif;
+      font-size: clamp(1.3rem, 5vw, 1.9rem);
+      letter-spacing: 0.18em;
+    }
+
+    .hdr-btn {
+      background: none; border: 2px solid var(--border);
+      color: var(--muted); cursor: pointer;
+      padding: 5px 10px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.65rem; letter-spacing: 0.15em; text-transform: uppercase;
+    }
+    .hdr-btn:hover { border-color: var(--border-hi); color: var(--text); }
+
+    /* Toast */
+    #toast {
+      position: fixed; top: 72px; left: 50%; transform: translateX(-50%);
+      background: var(--text); color: var(--bg);
+      font-family: 'Courier New', monospace;
+      font-size: 0.75rem; font-weight: 900;
+      letter-spacing: 0.12em; padding: 9px 18px;
+      z-index: 300; opacity: 0; pointer-events: none;
+      text-transform: uppercase; transition: opacity .12s; white-space: nowrap;
+    }
+    #toast.show { opacity: 1; }
+
+    /* Board */
+    #board-wrap {
+      flex: 1; display: flex;
+      align-items: center; justify-content: center;
+      padding: 8px; min-height: 0;
+    }
+
+    #board {
+      display: grid;
+      grid-template-rows: repeat(6, var(--tile-size));
+      grid-template-columns: repeat(5, var(--tile-size));
+      gap: 5px;
+    }
+
+    /* ─────────────────────────────────────────────────────
+       TILES
+    ───────────────────────────────────────────────────── */
+    .tile {
+      width: var(--tile-size); height: var(--tile-size);
+      border: 2px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      font-family: Impact, 'Arial Narrow', sans-serif;
+      font-size: var(--tile-font); font-weight: 900;
+      letter-spacing: 0.04em; text-transform: uppercase; color: var(--text);
+    }
+
+    .tile.has-letter  { border-color: #5a5a5a; }
+    .tile.active-row  { border-color: var(--border-hi); }
+
+    /* pop on type */
+    .tile.pop { animation: pop .08s ease; }
+    @keyframes pop { 0%,100%{transform:scale(1)} 50%{transform:scale(1.1)} }
+
+    /* flip on reveal */
+    .tile.flip { animation: flip .48s ease forwards; }
+    @keyframes flip {
+      0%  { transform: rotateX(0deg); }
+      49% { transform: rotateX(-90deg); }
+      50% { transform: rotateX(-90deg); }
+      100%{ transform: rotateX(0deg); }
+    }
+
+    /* result colours */
+    .tile.green  { background:var(--green);  border-color:var(--green);  color:#fff; }
+    .tile.yellow { background:var(--yellow); border-color:var(--yellow); color:#fff; }
+    .tile.absent { background:var(--absent); border-color:var(--absent); color:var(--absent-txt); }
+
+    /* win bounce */
+    .tile.bounce { animation: bounce .5s ease forwards; }
+    @keyframes bounce { 0%,100%{transform:translateY(0)} 40%{transform:translateY(-14px)} }
+
+    /* shake invalid row */
+    .shake { animation: shake .35s ease; }
+    @keyframes shake {
+      0%,100%{transform:translateX(0)}
+      20%{transform:translateX(-7px)} 40%{transform:translateX(7px)}
+      60%{transform:translateX(-5px)} 80%{transform:translateX(5px)}
+    }
+
+    /* ─────────────────────────────────────────────────────
+       KEYBOARD — sharp keys, no border-radius
+    ───────────────────────────────────────────────────── */
+    #keyboard {
+      width: 100%; max-width: 500px;
+      padding: 6px 8px 14px;
+      display: flex; flex-direction: column; gap: 5px;
+      flex-shrink: 0;
+    }
+
+    .key-row { display: flex; justify-content: center; gap: 4px; }
+
+    .key {
+      flex: 1;
+      height: clamp(42px, 7.5vw, 54px);
+      max-width: clamp(30px, 7.5vw, 44px);
+      background: var(--key-bg);
+      border: 2px solid #3c3c3c;
+      border-radius: 0;   /* intentionally sharp — no rounding */
+      color: var(--text);
+      font-family: 'Courier New', monospace;
+      font-size: clamp(.6rem, 1.8vw, .8rem); font-weight: 700;
+      letter-spacing: 0.04em; text-transform: uppercase;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+    }
+
+    .key.wide {
+      max-width: clamp(46px, 11vw, 64px);
+      font-size: clamp(.5rem, 1.4vw, .65rem); letter-spacing: 0;
+    }
+
+    .key:active { opacity: .7; }
+    .key.green  { background:var(--green);  border-color:var(--green);  color:#fff; }
+    .key.yellow { background:var(--yellow); border-color:var(--yellow); color:#fff; }
+    .key.absent { background:#1c1c1c; border-color:#252525; color:#3a3a3a; }
+
+    /* ─────────────────────────────────────────────────────
+       OVERLAYS  (Stats + How To Play)
+    ───────────────────────────────────────────────────── */
+    .overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,.88);
+      z-index: 200; align-items: center; justify-content: center;
+    }
+    .overlay.open { display: flex; }
+
+    .panel {
+      position: relative;
+      background: var(--bg); border: 2px solid var(--border);
+      width: min(360px, 94vw); padding: 26px 22px;
+    }
+
+    .panel-title {
+      font-family: Impact, 'Arial Narrow', sans-serif;
+      font-size: 1.3rem; letter-spacing: 0.18em; text-transform: uppercase;
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 10px; margin-bottom: 18px;
+    }
+
+    .close-x {
+      position: absolute; top: 10px; right: 14px;
+      background: none; border: none; color: var(--muted);
+      font-size: 1.2rem; cursor: pointer; font-family: monospace; line-height: 1;
+    }
+    .close-x:hover { color: var(--text); }
+
+    /* stats */
+    .stats-row {
+      display: grid; grid-template-columns: repeat(4,1fr);
+      gap: 8px; margin-bottom: 20px;
+    }
+    .stat { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+    .stat-n {
+      font-family: Impact, 'Arial Narrow', sans-serif;
+      font-size: 2rem; line-height: 1;
+    }
+    .stat-l {
+      font-family: 'Courier New', monospace;
+      font-size: 0.55rem; letter-spacing: 0.1em;
+      color: var(--muted); text-align: center; text-transform: uppercase;
+    }
+
+    /* end message */
+    #end-msg {
+      display: none;
+      font-family: 'Courier New', monospace;
+      font-size: 0.72rem; letter-spacing: 0.1em;
+      color: var(--muted); text-align: center;
+      margin-bottom: 14px; text-transform: uppercase;
+    }
+    #end-msg strong { color: var(--text); letter-spacing: 0.08em; font-size: .85rem; }
+
+    /* action buttons — sharp, no radius */
+    .act-btn {
+      display: block; width: 100%; padding: 13px;
+      background: var(--text); color: var(--bg);
+      border: 2px solid var(--text); border-radius: 0;
+      font-family: Impact, 'Arial Narrow', sans-serif;
+      font-size: 1rem; letter-spacing: 0.15em; text-transform: uppercase;
+      cursor: pointer; margin-top: 6px;
+    }
+    .act-btn:hover { background: #ccc; border-color: #ccc; }
+    .act-btn.ghost {
+      background: transparent; color: var(--muted); border-color: var(--border);
+    }
+    .act-btn.ghost:hover { color: var(--text); border-color: var(--border-hi); }
+
+    /* guide examples */
+    .eg-row { display: flex; gap: 5px; margin: 10px 0 4px; }
+    .eg-tile {
+      width: 34px; height: 34px; border: 2px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      font-family: Impact, 'Arial Narrow', sans-serif;
+      font-size: 1rem; font-weight: 900; text-transform: uppercase;
+    }
+    .eg-tile.green  { background:var(--green);  border-color:var(--green);  color:#fff; }
+    .eg-tile.yellow { background:var(--yellow); border-color:var(--yellow); color:#fff; }
+    .eg-tile.absent { background:var(--absent); border-color:var(--absent); color:var(--absent-txt); }
+
+    .guide-p {
+      font-family: 'Courier New', monospace;
+      font-size: 0.68rem; letter-spacing: 0.06em;
+      color: var(--muted); line-height: 1.65;
+    }
+    .guide-p b { color: var(--text); }
+  </style>
+</head>
+<body>
+
+  <!-- ══════════════════════════════════════════════════════════
+       LOADING SCREEN
+  ══════════════════════════════════════════════════════════ -->
+  <div id="loading-screen">
+    <div class="ld-title">WORDLE</div>
+    <div class="ld-rule"></div>
+    <div class="ld-sub">Guess the word</div>
+    <div style="width:min(240px,70vw)">
+      <div id="prog-track"><div id="prog-fill"></div></div>
+      <div id="prog-pct">LOADING... 0%</div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       GAME
+  ══════════════════════════════════════════════════════════ -->
+  <div id="game">
+    <div id="header">
+      <div id="game-title">WORDLE</div>
+      <div style="display:flex;gap:6px">
+        <button class="hdr-btn" id="help-btn">HOW</button>
+        <button class="hdr-btn" id="stats-btn">STATS</button>
+      </div>
+    </div>
+
+    <div id="toast"></div>
+    <div id="board-wrap"><div id="board"></div></div>
+
+    <div id="keyboard">
+      <div class="key-row" id="kr1"></div>
+      <div class="key-row" id="kr2"></div>
+      <div class="key-row" id="kr3"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       STATS OVERLAY
+  ══════════════════════════════════════════════════════════ -->
+  <div class="overlay" id="stats-overlay">
+    <div class="panel">
+      <button class="close-x" id="close-stats">✕</button>
+      <div class="panel-title">Statistics</div>
+      <div class="stats-row">
+        <div class="stat"><div class="stat-n" id="s-played">0</div><div class="stat-l">Played</div></div>
+        <div class="stat"><div class="stat-n" id="s-win">0</div><div class="stat-l">Win %</div></div>
+        <div class="stat"><div class="stat-n" id="s-streak">0</div><div class="stat-l">Streak</div></div>
+        <div class="stat"><div class="stat-n" id="s-best">0</div><div class="stat-l">Best</div></div>
+      </div>
+      <div id="end-msg"></div>
+      <button class="act-btn" id="play-again-btn" style="display:none">PLAY AGAIN</button>
+      <button class="act-btn ghost" id="close-stats-2">CLOSE</button>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       HOW TO PLAY OVERLAY
+  ══════════════════════════════════════════════════════════ -->
+  <div class="overlay" id="guide-overlay">
+    <div class="panel">
+      <button class="close-x" id="close-guide">✕</button>
+      <div class="panel-title">How to Play</div>
+      <p class="guide-p">Guess the <b>WORDLE</b> in 6 tries. Each guess must be a valid 5-letter word.</p>
+
+      <div class="eg-row">
+        <div class="eg-tile green">W</div><div class="eg-tile">E</div>
+        <div class="eg-tile">A</div><div class="eg-tile">R</div><div class="eg-tile">Y</div>
+      </div>
+      <p class="guide-p"><b>W</b> is in the word and in the correct spot.</p>
+
+      <div class="eg-row">
+        <div class="eg-tile">P</div><div class="eg-tile yellow">I</div>
+        <div class="eg-tile">L</div><div class="eg-tile">L</div><div class="eg-tile">S</div>
+      </div>
+      <p class="guide-p"><b>I</b> is in the word but in the wrong spot.</p>
+
+      <div class="eg-row">
+        <div class="eg-tile">V</div><div class="eg-tile">A</div>
+        <div class="eg-tile">G</div><div class="eg-tile absent">U</div><div class="eg-tile">E</div>
+      </div>
+      <p class="guide-p"><b>U</b> is not in the word at all.</p>
+
+      <button class="act-btn" id="guide-ok" style="margin-top:16px">GOT IT</button>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       JAVASCRIPT
+  ══════════════════════════════════════════════════════════ -->
+  <script>
+  'use strict';
+
+  /* ────────────────────────────────────────────────────────
+     WORD LISTS
+     ANSWERS: pool of possible target words (curated).
+     VALID_EXTRA: accepted guesses that won't be targets.
+     ALL_VALID: union Set used for dictionary validation.
+  ──────────────────────────────────────────────────────── */
+  const ANSWERS = [
+    "ABOUT","ABOVE","ABUSE","ACTOR","ACUTE","ADMIT","ADOPT","ADULT","AFTER","AGAIN",
+    "AGENT","AGREE","AHEAD","ALARM","ALBUM","ALERT","ALIEN","ALIGN","ALIKE","ALIVE",
+    "ALLEY","ALLOW","ALONE","ALONG","ALTER","AMAZE","AMBER","ANGEL","ANGER","ANGLE",
+    "ANGRY","ANKLE","ANNEX","APART","APPLE","APPLY","ARENA","ARGUE","ARISE","ARMED",
+    "ARROW","ASKED","ATLAS","ATTIC","AUDIO","AVOID","AWAKE","AWFUL","BAKER","BANKS",
+    "BARGE","BASIC","BASIN","BATCH","BEACH","BEARD","BEAST","BEGAN","BEGIN","BENCH",
+    "BIRTH","BISON","BLACK","BLADE","BLAME","BLANK","BLAST","BLAZE","BLEED","BLESS",
+    "BLIND","BLOCK","BLOOD","BLOOM","BLOWN","BOARD","BONUS","BOOST","BOUND","BRAIN",
+    "BRAKE","BRAND","BRAVE","BREAK","BREED","BRICK","BRIEF","BRING","BROKE","BROOK",
+    "BROWN","BRUSH","BUILD","BUILT","BURST","BUYER","CABLE","CABIN","CAMEL","CANDY",
+    "CARRY","CARVE","CAUSE","CEASE","CHAIN","CHAIR","CHALK","CHAOS","CHARM","CHEAP",
+    "CHECK","CHEEK","CHESS","CHEST","CHIEF","CHILD","CHILL","CLAIM","CLASH","CLASS",
+    "CLEAN","CLEAR","CLERK","CLICK","CLIFF","CLIMB","CLING","CLOCK","CLONE","CLOSE",
+    "CLOUD","CLOWN","COAST","COBRA","COLOR","COMIC","CORAL","COUNT","COURT","COVER",
+    "CRACK","CRAFT","CRANE","CRASH","CRAZY","CREAM","CREEK","CRIME","CRISP","CROSS",
+    "CROWD","CROWN","CRUEL","CRUSH","CURVE","DAILY","DANCE","DEALT","DECAY","DECOY",
+    "DELTA","DENSE","DEPTH","DEVIL","DIRTY","DISCO","DODGE","DOUBT","DRAFT","DRAIN",
+    "DRAMA","DRANK","DRAWN","DREAM","DRESS","DRIFT","DRILL","DRIVE","DROVE","DRYER",
+    "DWARF","DYING","EAGER","EAGLE","EARLY","EARTH","EIGHT","ELITE","EMPTY","ENEMY",
+    "ENJOY","ENTER","ENTRY","EQUAL","ERROR","ESSAY","EVENT","EVERY","EXACT","EXERT",
+    "EXILE","EXTRA","FABLE","FAINT","FAITH","FALSE","FANCY","FATAL","FAULT","FEAST",
+    "FENCE","FERRY","FEVER","FIELD","FIFTH","FIFTY","FIGHT","FINAL","FIRST","FIXED",
+    "FLAME","FLARE","FLASK","FLICK","FLOCK","FLOOD","FLOOR","FLOUR","FLUTE","FOCUS",
+    "FORCE","FORGE","FORTH","FOUND","FRAME","FRANK","FRAUD","FRONT","FROST","FROZE",
+    "FRUIT","FULLY","FUNNY","FURRY","FUZZY","GAUGE","GHOST","GIANT","GIVEN","GLARE",
+    "GLASS","GLIDE","GLOOM","GLORY","GLOVE","GRACE","GRADE","GRAIN","GRAND","GRANT",
+    "GRASP","GRASS","GRAVE","GREAT","GREED","GREEN","GREET","GRIEF","GRILL","GRIND",
+    "GROAN","GROVE","GROWN","GUARD","GUESS","GUEST","GUIDE","GUILD","GUILT","GULCH",
+    "HABIT","HARSH","HASTY","HEART","HEAVY","HEIST","HERBS","HINGE","HIRED","HOLLY",
+    "HONEY","HONOR","HORSE","HOTEL","HOUSE","HUMAN","HUMOR","HURRY","IDEAL","IMAGE",
+    "INDEX","INDIE","INNER","INPUT","INTRO","IRONY","ISSUE","IVORY","JEWEL","JOINT",
+    "JUDGE","KARMA","KNIFE","KNOCK","KNOWN","LABEL","LANCE","LASER","LATER","LAUGH",
+    "LAYER","LEARN","LEASE","LEAST","LEAVE","LEGAL","LEMON","LEVEL","LIGHT","LIMIT",
+    "LINER","LIVER","LOCAL","LODGE","LOGIC","LOYAL","LUCKY","LYRIC","MAGIC","MAJOR",
+    "MANGA","MANOR","MAPLE","MARCH","MARSH","MATCH","MAYOR","MEDIA","MERIT","METAL",
+    "MIGHT","MINOR","MINUS","MIXED","MONEY","MONTH","MOOSE","MORAL","MOTOR","MOUNT",
+    "MOUSE","MOVED","MOVIE","MUDDY","MUSIC","NAIVE","NASTY","NERVE","NEVER","NIGHT",
+    "NOBLE","NOISE","NORTH","NOTED","NOVEL","NURSE","OFFER","ORBIT","ORDER","OTHER",
+    "OUTER","OZONE","PAINT","PAPER","PARTY","PEACE","PEARL","PEDAL","PENNY","PERCH",
+    "PILOT","PIZZA","PLACE","PLAIN","PLANE","PLANT","PLATE","PLAZA","POINT","POLAR",
+    "POWER","PRESS","PRICE","PRIDE","PRIME","PRINT","PRIOR","PRIZE","PROBE","PROOF",
+    "PROUD","PROVE","PULSE","PUNCH","PUPIL","PURSE","QUERY","QUICK","QUIET","QUOTA",
+    "QUOTE","RADAR","RADIO","RALLY","RANCH","RANGE","RAPID","RATIO","REACH","READY",
+    "REALM","REBEL","REFER","REIGN","RELAX","RELAY","REMIX","REPAY","RESET","REUSE",
+    "RIDER","RIDGE","RIFLE","RIGHT","RISKY","RIVAL","RIVER","ROBOT","ROCKY","ROUGH",
+    "ROUND","ROUTE","ROYAL","RULER","RURAL","SADLY","SAINT","SALAD","SANDY","SAUCE",
+    "SCALE","SCARY","SCENE","SCOPE","SCORE","SCOUT","SCREW","SENSE","SERVE","SEVEN",
+    "SHADE","SHAKE","SHALL","SHAME","SHAPE","SHARE","SHARP","SHEEP","SHEET","SHELF",
+    "SHELL","SHIFT","SHINE","SHIRT","SHORT","SHOUT","SIGHT","SINCE","SIXTH","SIXTY",
+    "SKILL","SKULL","SLASH","SLAVE","SLEEP","SLIDE","SLOPE","SMART","SMILE","SMOKE",
+    "SNAKE","SOLAR","SOLID","SOLVE","SORRY","SOUTH","SPACE","SPARE","SPARK","SPEAK",
+    "SPEED","SPELL","SPEND","SPILL","SPINE","SPITE","SPLIT","SPOKE","SPOON","SPORT",
+    "SQUAD","STACK","STAFF","STAGE","STAIN","STAIR","STAKE","STALE","STALL","STAMP",
+    "STAND","STARK","START","STATE","STEAL","STEAM","STEEL","STEEP","STEER","STERN",
+    "STICK","STIFF","STILL","STING","STOCK","STONE","STORM","STORY","STOVE","STRAP",
+    "STRAW","STRAY","STRIP","STUDY","STYLE","SUGAR","SUPER","SURGE","SWAMP","SWEAR",
+    "SWEEP","SWEET","SWIFT","SWING","SWORD","SWORE","TAKEN","TASTE","TEACH","TEETH",
+    "THEFT","THEIR","THEME","THERE","THING","THINK","THIRD","THORN","THOSE","THREE",
+    "THROW","TIGER","TIGHT","TIMER","TITLE","TODAY","TOKEN","TOTAL","TOUCH","TOUGH",
+    "TRACE","TRACK","TRADE","TRAIL","TRAIN","TRAIT","TRASH","TREAT","TREND","TRIAL",
+    "TRIBE","TRICK","TRIED","TROOP","TROUT","TRUCK","TRULY","TRUNK","TRUST","TRUTH",
+    "TUNIC","TWICE","TWIST","ULTRA","UNCLE","UNDER","UNIFY","UNION","UNITE","UNITY",
+    "UNTIL","UPPER","UPSET","USAGE","USUAL","UTTER","VALID","VALUE","VALVE","VAPOR",
+    "VAULT","VENOM","VERSE","VIDEO","VIGOR","VIRAL","VISIT","VISOR","VISTA","VITAL",
+    "VIVID","VOCAL","VOICE","VOTER","WASTE","WATCH","WATER","WEARY","WEIGH","WEIRD",
+    "WHALE","WHEAT","WHEEL","WHERE","WHICH","WHILE","WHITE","WHOLE","WHOSE","WIDER",
+    "WIELD","WITCH","WOMAN","WOMEN","WORLD","WORRY","WORSE","WORST","WORTH","WOULD",
+    "WOUND","WRATH","WRITE","WROTE","YACHT","YIELD","YOUNG","YOURS","YOUTH","ZEBRA","ZESTY"
+  ];
+
+  const VALID_EXTRA = [
+    "AALII","ABACI","ABACK","ABAFT","ABASH","ABATE","ABBOT","ABHOR","ABODE","ABUTS",
+    "ABYSS","ACHED","ACORN","ACRES","ACRID","ACTED","ADDED","ADEPT","ADORE","ADORN",
+    "AEGIS","AFOOT","AGAPE","AGAVE","AGLOW","AGONE","AGONY","AGORA","AIDED","AIMER",
+    "AISLE","ALGAE","ALIAS","ALIBI","ALOFT","ALOOF","ALOUD","ALTAR","AMBLE","AMEND",
+    "AMINO","AMISS","AMITY","AMPLE","AMUSE","ANNOY","APING","ATONE","AVAIL","AVAST",
+    "AVIAN","BABEL","BADLY","BAGEL","BAGGY","BALMY","BANAL","BANJO","BARNS","BAYOU",
+    "BEADY","BEFIT","BOGUS","BONGO","BORAX","BOSSY","BOXED","BRACE","BRAID","BLUNT",
+    "CACAO","CACTI","CADDY","CADET","CAGEY","CASTE","CATTY","CHAFE","CHAFF","CHAMP",
+    "CHARD","CHASM","CHEWY","CHOMP","CHORE","CHOSE","CHUNK","CHUTE","CIGAR","CITED",
+    "CIVIC","CIVIL","CLEFT","CLUNK","COCOA","COMFY","CONCH","CONDO","COUCH","COVET",
+    "CREAK","GASSY","GAUZY","GAUZE","GAVEL","GENRE","GIRTH","GLINT","GLOAT","GLOSS",
+    "GNASH","GOOEY","GORGE","GOUGE","GOURD","GRAIL","GRAFT","GRAZE","GRIPE","GRUFF",
+    "GUPPY","GUSTO","JAZZY","JIFFY","JIVED","JOKEY","JUICY","JUNKY","KAYAK","KNACK",
+    "KNAVE","KNEEL","KNELT","KNOBS","KOALA","KUDOS","LLAMA","LOBBY","LOFTY","LOOPY",
+    "LORRY","LOWLY","LUMPY","LUSTY","LYMPH","MAXIM","MEALY","MELEE","MESSY","MILKY",
+    "MINTY","MIRTH","MISER","MOIST","MOLDY","MOODY","MOUSY","MUCKY","MUGGY","MULCH",
+    "MUSTY","NIFTY","NIPPY","OAKEN","OCTET","OFFAL","OFTEN","PANSY","PASTY","PATSY",
+    "PICKY","PINEY","PITHY","PIXIE","PIXEL","POKED","POKER","POOCH","POPPY","PORKY",
+    "POSSE","POTTY","PERKY","PLEAD","PLEAT","PREEN","PRIMO","PRIVY","PRONE","PROXY",
+    "RABID","RAINY","RASPY","RATTY","RECAP","RECUT","REEDY","REFIT","REGAL","RERUN",
+    "RETRO","RETRY","RHYME","RIGID","RIVET","ROOMY","RUDDY","RUNNY","RUSTY","NUTTY",
+    "SABER","SASSY","SAVVY","SEEDY","SEIZE","SETUP","SHADY","SHARD","SHEER","SHIRE",
+    "SHIRK","SHOOK","SHORE","SHRUG","SHUNT","SISSY","SIREN","SKIFF","SKIMP","SKIRT",
+    "SKULK","SLAIN","SLICK","SLOSH","SLOTH","SLUNG","SLUNK","SMASH","SMEAR","SMELT",
+    "SNACK","SNARE","SNIDE","SNIFF","SNORE","SNORT","SNUCK","SNUFF","SOGGY","SOOTY",
+    "SPANK","SPAWN","SPECK","STOIC","STOMP","STOUT","STRUT","SUNNY","SWANK","TABOO",
+    "TACKY","TAPIR","TARDY","TATTY","TAWNY","TEARY","TEPID","TIMID","TIPSY","TOADY",
+    "TOPAZ","TRIPE","TRITE","TUBBY","TURBO","TWERP","VAPID","VEINY","VERSO","VEXED",
+    "VIPER","VOGUE","VOLTA","VOMIT","VYING","WALTZ","WARTY","WEEDY","WHELP","WIMPY",
+    "WINDY","WISPY","WITTY","WORMY","WOOZY","YUCKY","ZIPPY","ZLOTY","ZINGY"
+  ];
+
+  const ALL_VALID = new Set([...ANSWERS, ...VALID_EXTRA]);
+
+  /* ════════════════════════════════════════════════════════════
+     POKI SDK WRAPPER
+     ─────────────────────────────────────────────────────────
+     All PokiSDK calls are routed through this object.
+     • If PokiSDK is undefined (ad blocker / local dev), the
+       game continues without ads — no crash, no error.
+     • adRunning flag blocks keyboard/touch input while an
+       ad is playing (required by Poki inspector).
+  ════════════════════════════════════════════════════════════ */
+  const Poki = {
+    live:      false,   // true when SDK confirms it initialised
+    adRunning: false,   // true while commercialBreak is active
+
+    /* ── init ──────────────────────────────────────────────
+       Call once at boot, before any gameplay logic.
+    ─────────────────────────────────────────────────────── */
+    init() {
+      if (typeof PokiSDK === 'undefined') {
+        console.warn('[Poki] SDK not found — running ad-free');
+        return Promise.resolve();
+      }
+      /* POKI SDK: PokiSDK.init() */
+      return PokiSDK.init()
+        .then(() => { this.live = true;  console.log('[Poki] SDK ready'); })
+        .catch(() => { this.live = false; console.warn('[Poki] init failed (ad-block?)'); });
+    },
+
+    /* ── gameLoadingFinished ───────────────────────────────
+       Call after all assets have loaded. Poki uses this
+       to measure Conversion to Play.
+    ─────────────────────────────────────────────────────── */
+    loadingDone() {
+      if (!this.live) return;
+      /* POKI SDK: PokiSDK.gameLoadingFinished() */
+      PokiSDK.gameLoadingFinished();
+    },
+
+    /* ── gameplayStart ─────────────────────────────────────
+       Call the moment the player first interacts with a
+       round (first letter typed). DO NOT fire on load.
+    ─────────────────────────────────────────────────────── */
+    playStart() {
+      if (!this.live) return;
+      /* POKI SDK: PokiSDK.gameplayStart() */
+      PokiSDK.gameplayStart();
+    },
+
+    /* ── gameplayStop ──────────────────────────────────────
+       Call whenever gameplay pauses or ends: game-over,
+       win, overlay open (if desired), etc.
+    ─────────────────────────────────────────────────────── */
+    playStop() {
+      if (!this.live) return;
+      /* POKI SDK: PokiSDK.gameplayStop() */
+      PokiSDK.gameplayStop();
+    },
+
+    /* ── commercialBreak ───────────────────────────────────
+       Two placements in this game:
+         1) Loading screen → game  (automatic)
+         2) "Play Again" button   (user-initiated)
+
+       cb = executed after the ad (or immediately if no SDK).
+       Wire audio mute/unmute inside the callbacks below.
+    ─────────────────────────────────────────────────────── */
+    commercialBreak(cb) {
+      if (!this.live) { if (cb) cb(); return; }
+      this.adRunning = true;
+      /* POKI SDK: PokiSDK.commercialBreak() */
+      PokiSDK.commercialBreak(() => {
+        /*
+          onBeforeAd callback — runs just before the ad plays.
+          ➜ Mute audio here, e.g. AudioManager.mute();
+        */
+      }).then(() => {
+        this.adRunning = false;
+        /*
+          onAfterAd — ad has finished.
+          ➜ Unmute audio here, e.g. AudioManager.unmute();
+        */
+        if (cb) cb();
+      });
+    }
+  };
+
+  /* ════════════════════════════════════════════════════════════
+     GAME  (state + logic)
+  ════════════════════════════════════════════════════════════ */
+  const Game = {
+    target:   '',
+    guesses:  [],
+    current:  '',
+    row:      0,
+    over:     false,
+    won:      false,
+    started:  false,   // gameplayStart fired this round?
+
+    /* localStorage stats — survives page reloads */
+    stats: { played: 0, won: 0, streak: 0, best: 0 },
+
+    init() {
+      this._loadStats();
+      this.newGame();
+    },
+
+    newGame() {
+      this.target  = ANSWERS[Math.floor(Math.random() * ANSWERS.length)];
+      this.guesses = [];
+      this.current = '';
+      this.row     = 0;
+      this.over    = false;
+      this.won     = false;
+      this.started = false;
+      UI.reset();
+    },
+
+    /* Called by keyboard key press or virtual key tap */
+    type(letter) {
+      if (this.over || Poki.adRunning) return;
+      if (this.current.length >= 5) return;
+
+      /*
+        gameplayStart fires on the very first letter of each
+        round — exactly as required by Poki Inspector.
+        NOT on page load, NOT on menu open.
+      */
+      if (!this.started) {
+        this.started = true;
+        Poki.playStart();   /* ← POKI SDK: gameplayStart */
+      }
+
+      this.current += letter;
+      UI.setTile(this.row, this.current.length - 1, letter);
+    },
+
+    del() {
+      if (this.over || Poki.adRunning) return;
+      if (!this.current.length) return;
+      const col = this.current.length - 1;
+      this.current = this.current.slice(0, -1);
+      UI.clearTile(this.row, col);
+    },
+
+    submit() {
+      if (this.over || Poki.adRunning) return;
+      if (this.current.length < 5) {
+        UI.toast('NOT ENOUGH LETTERS'); UI.shake(this.row); return;
+      }
+      if (!ALL_VALID.has(this.current)) {
+        UI.toast('NOT IN WORD LIST'); UI.shake(this.row); return;
+      }
+
+      const result = this._evaluate(this.current, this.target);
+      const guess  = this.current;
+      this.guesses.push({ word: guess, result });
+
+      UI.reveal(this.row, guess, result, () => {
+        UI.syncKeys(guess, result);
+
+        const won  = result.every(r => r === 'green');
+        const lost = !won && this.row === 5;
+
+        if (won || lost) {
+          this.over = true;
+          this.won  = won;
+
+          Poki.playStop();          /* ← POKI SDK: gameplayStop */
+          this._updateStats(won);
+
+          if (won) {
+            const msgs = ['GENIUS!','MAGNIFICENT','IMPRESSIVE','SPLENDID','GREAT','PHEW!'];
+            UI.toast(msgs[this.row] || 'YES!', 1600);
+            UI.bounce(this.row);
+          }
+          setTimeout(() => UI.showEnd(this.target, won), won ? 1900 : 1300);
+        } else {
+          this.row++;
+          this.current = '';
+        }
+      });
+    },
+
+    /* ──────────────────────────────────────────────────────
+       DUPLICATE-LETTER EVALUATION ALGORITHM
+       Two-pass approach — correct per official Wordle rules.
+
+       Example: target = "ABBEY", guess = "BABES"
+         Pass 1 (greens):
+           i=1 → B matches B  → green, null both
+           i=3 → E matches E  → green, null both
+         Pass 2 (yellows):
+           i=0 → B, scan tPool → finds remaining B → yellow
+           i=2 → B, scan tPool → no B left         → absent
+           i=4 → S, scan tPool → no S              → absent
+         Result: [yellow, green, absent, green, absent]
+         ✓ Correctly avoids double-yellow for one letter.
+    ────────────────────────────────────────────────────── */
+    _evaluate(guess, target) {
+      const res   = Array(5).fill('absent');
+      const tPool = target.split('');
+      const gPool = guess.split('');
+
+      // Pass 1 — exact matches → green
+      for (let i = 0; i < 5; i++) {
+        if (gPool[i] === tPool[i]) {
+          res[i] = 'green';
+          tPool[i] = null;
+          gPool[i] = null;
+        }
+      }
+
+      // Pass 2 — present elsewhere → yellow
+      for (let i = 0; i < 5; i++) {
+        if (gPool[i] !== null) {
+          const j = tPool.indexOf(gPool[i]);
+          if (j !== -1) {
+            res[i] = 'yellow';
+            tPool[j] = null;
+          }
+        }
+      }
+
+      return res;
+    },
+
+    _updateStats(won) {
+      this.stats.played++;
+      if (won) {
+        this.stats.won++;
+        this.stats.streak++;
+        if (this.stats.streak > this.stats.best) this.stats.best = this.stats.streak;
+      } else {
+        this.stats.streak = 0;
+      }
+      this._saveStats();
+    },
+
+    /* Wrap localStorage in try/catch — works in incognito mode */
+    _loadStats() {
+      try {
+        const s = localStorage.getItem('wc_stats');
+        if (s) this.stats = JSON.parse(s);
+      } catch (_) { /* incognito — silently continue */ }
+    },
+
+    _saveStats() {
+      try {
+        localStorage.setItem('wc_stats', JSON.stringify(this.stats));
+      } catch (_) { /* incognito — silently continue */ }
+    }
+  };
+
+  /* ════════════════════════════════════════════════════════════
+     UI CONTROLLER
+  ════════════════════════════════════════════════════════════ */
+  const UI = {
+    tiles:    [],
+    _toastId: null,
+
+    /* Build 6×5 tile grid */
+    buildBoard() {
+      const b = document.getElementById('board');
+      b.innerHTML = '';
+      this.tiles  = [];
+      for (let r = 0; r < 6; r++) {
+        this.tiles[r] = [];
+        for (let c = 0; c < 5; c++) {
+          const t = document.createElement('div');
+          t.className = 'tile';
+          b.appendChild(t);
+          this.tiles[r][c] = t;
+        }
+      }
+    },
+
+    /* Build three-row QWERTY virtual keyboard */
+    buildKeys() {
+      const ROWS = [
+        ['Q','W','E','R','T','Y','U','I','O','P'],
+        ['A','S','D','F','G','H','J','K','L'],
+        ['ENTER','Z','X','C','V','B','N','M','⌫']
+      ];
+      ROWS.forEach((row, ri) => {
+        const el = document.getElementById(`kr${ri + 1}`);
+        el.innerHTML = '';
+        row.forEach(k => {
+          const btn = document.createElement('button');
+          btn.className   = 'key' + (k.length > 1 ? ' wide' : '');
+          btn.textContent = k;
+          btn.dataset.key = k;
+          btn.addEventListener('click', () => {
+            if (k === 'ENTER') Game.submit();
+            else if (k === '⌫')  Game.del();
+            else                  Game.type(k);
+          });
+          el.appendChild(btn);
+        });
+      });
+    },
+
+    reset() {
+      this.buildBoard();
+      this.buildKeys();
+      document.getElementById('stats-overlay').classList.remove('open');
+      document.getElementById('guide-overlay').classList.remove('open');
+      document.getElementById('end-msg').style.display        = 'none';
+      document.getElementById('play-again-btn').style.display = 'none';
+    },
+
+    setTile(row, col, letter) {
+      const t = this.tiles[row][col];
+      t.textContent = letter;
+      t.classList.add('has-letter', 'pop');
+      t.addEventListener('animationend', () => t.classList.remove('pop'), { once: true });
+    },
+
+    clearTile(row, col) {
+      const t = this.tiles[row][col];
+      t.textContent = '';
+      t.classList.remove('has-letter');
+    },
+
+    /*
+      Flip each tile with staggered delay.
+      Colour class is applied at the mid-flip frame (rotateX = -90°)
+      so the new colour appears as the tile faces the player again.
+    */
+    reveal(row, word, result, done) {
+      const STEP = 320;
+      result.forEach((state, col) => {
+        setTimeout(() => {
+          const t = this.tiles[row][col];
+          t.classList.add('flip');
+          setTimeout(() => {
+            t.classList.remove('has-letter', 'active-row');
+            t.classList.add(state);   // 'green' | 'yellow' | 'absent'
+          }, STEP * 0.75);
+          if (col === 4) setTimeout(done, STEP * 4 + 300);
+        }, col * STEP);
+      });
+    },
+
+    bounce(row) {
+      this.tiles[row].forEach((t, col) => {
+        setTimeout(() => {
+          t.classList.add('bounce');
+          t.addEventListener('animationend', () => t.classList.remove('bounce'), { once: true });
+        }, col * 90);
+      });
+    },
+
+    shake(row) {
+      this.tiles[row].forEach(t => t.classList.add('shake'));
+      setTimeout(() => this.tiles[row].forEach(t => t.classList.remove('shake')), 400);
+    },
+
+    /*
+      Update key colour. Priority: green > yellow > absent.
+      A key that was green never gets downgraded to yellow or absent.
+    */
+    syncKeys(word, result) {
+      const rank = { green: 3, yellow: 2, absent: 1 };
+      result.forEach((state, i) => {
+        const btn = document.querySelector(`.key[data-key="${word[i]}"]`);
+        if (!btn) return;
+        const cur = btn.dataset.state || '';
+        if ((rank[state] || 0) > (rank[cur] || 0)) {
+          btn.classList.remove('green', 'yellow', 'absent');
+          btn.classList.add(state);
+          btn.dataset.state = state;
+        }
+      });
+    },
+
+    toast(msg, dur = 1100) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.classList.add('show');
+      if (this._toastId) clearTimeout(this._toastId);
+      this._toastId = setTimeout(() => el.classList.remove('show'), dur);
+    },
+
+    showEnd(target, won) {
+      const el = document.getElementById('end-msg');
+      el.innerHTML = won
+        ? 'WELL DONE!'
+        : `THE WORD WAS <strong>${target}</strong>`;
+      el.style.display = 'block';
+      document.getElementById('play-again-btn').style.display = 'block';
+      this._refreshStats();
+      document.getElementById('stats-overlay').classList.add('open');
+    },
+
+    _refreshStats() {
+      const s = Game.stats;
+      document.getElementById('s-played').textContent = s.played;
+      document.getElementById('s-win').textContent    = s.played ? Math.round(s.won / s.played * 100) : 0;
+      document.getElementById('s-streak').textContent = s.streak;
+      document.getElementById('s-best').textContent   = s.best;
+    }
+  };
+
+  /* ════════════════════════════════════════════════════════════
+     LOADING SEQUENCE
+     ─────────────────────────────────────────────────────────
+     1. Simulate asset loading (0 → 100 %)
+     2. Call gameLoadingFinished()
+     3. Fire commercialBreak()  ← first ad placement
+     4. Reveal game on ad completion
+  ════════════════════════════════════════════════════════════ */
+  function runLoader() {
+    let pct = 0;
+    const fill  = document.getElementById('prog-fill');
+    const label = document.getElementById('prog-pct');
+
+    const tick = setInterval(() => {
+      pct = Math.min(pct + Math.random() * 20 + 4, 94);
+      fill.style.width  = pct + '%';
+      label.textContent = `LOADING... ${Math.round(pct)}%`;
+    }, 170);
+
+    setTimeout(() => {
+      clearInterval(tick);
+      fill.style.width  = '100%';
+      label.textContent = 'LOADING... 100%';
+
+      Poki.loadingDone();   /* ← POKI SDK: gameLoadingFinished */
+
+      setTimeout(() => {
+        /*
+          ── POKI SDK: commercialBreak ──────────────────────
+          Ad placement 1: between loading screen and game.
+          This is a natural, non-gameplay break, exactly as
+          recommended in Poki's integration guide.
+        */
+        Poki.commercialBreak(revealGame);
+      }, 350);
+    }, 1700);
+  }
+
+  function revealGame() {
+    document.getElementById('loading-screen').style.display = 'none';
+    document.getElementById('game').style.display = 'flex';
+  }
+
+  /* ════════════════════════════════════════════════════════════
+     PHYSICAL KEYBOARD INPUT
+  ════════════════════════════════════════════════════════════ */
+  document.addEventListener('keydown', e => {
+    /*
+      POKI REQUIREMENT: prevent the browser page from scrolling
+      when the player presses Space or arrow keys during gameplay.
+    */
+    if ([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      e.preventDefault();
+    }
+
+    if (Poki.adRunning) return;  // Block all input during ads
+
+    if (e.key === 'Enter')               Game.submit();
+    else if (e.key === 'Backspace')      Game.del();
+    else if (/^[a-zA-Z]$/.test(e.key))  Game.type(e.key.toUpperCase());
+  });
+
+  /* ════════════════════════════════════════════════════════════
+     OVERLAY WIRING
+  ════════════════════════════════════════════════════════════ */
+  const $ = id => document.getElementById(id);
+
+  $('stats-btn').addEventListener('click', () => {
+    UI._refreshStats();
+    $('stats-overlay').classList.add('open');
+  });
+  $('close-stats').addEventListener('click', ()  => $('stats-overlay').classList.remove('open'));
+  $('close-stats-2').addEventListener('click', () => $('stats-overlay').classList.remove('open'));
+
+  $('help-btn').addEventListener('click', ()   => $('guide-overlay').classList.add('open'));
+  $('close-guide').addEventListener('click', () => $('guide-overlay').classList.remove('open'));
+  $('guide-ok').addEventListener('click', ()   => $('guide-overlay').classList.remove('open'));
+
+  /*
+    PLAY AGAIN button
+    ─────────────────
+    POKI SDK: commercial break before the next game starts.
+    This is ad placement 2 — triggered by player choice,
+    providing a natural break between rounds.
+
+    Poki.adRunning = true during the break, so all tile/key
+    input is blocked until the ad completes.
+  */
+  $('play-again-btn').addEventListener('click', () => {
+    $('stats-overlay').classList.remove('open');
+    /*
+      ── POKI SDK: commercialBreak ──────────────────────────
+      Ad placement 2: after game ends, before the new round.
+      Fires only when player explicitly clicks "Play Again".
+    */
+    Poki.commercialBreak(() => Game.newGame());
+  });
+
+  /* ════════════════════════════════════════════════════════════
+     BOOT SEQUENCE
+     ─────────────────────────────────────────────────────────
+     Order matters:
+       1. PokiSDK.init()   — must be first
+       2. Game.init()      — sets up state + builds UI
+       3. runLoader()      — shows loading bar, then ad
+  ════════════════════════════════════════════════════════════ */
+  Poki.init().then(() => {
+    Game.init();
+    runLoader();
+  });
+
+  /* ════════════════════════════════════════════════════════════
+     AUDIO PLACEHOLDER
+     ─────────────────────────────────────────────────────────
+     Uncomment and fill in paths to enable sound effects.
+     Call playSound('flip'), playSound('win'), etc. in the
+     appropriate UI methods (reveal, showEnd, shake).
+
+     const SOUNDS = {
+       flip:  new Audio('./sounds/tile-flip.mp3'),
+       win:   new Audio('./sounds/win.mp3'),
+       lose:  new Audio('./sounds/lose.mp3'),
+       type:  new Audio('./sounds/type.mp3'),
+       error: new Audio('./sounds/error.mp3'),
+     };
+
+     function playSound(name) {
+       const s = SOUNDS[name];
+       if (!s) return;
+       s.currentTime = 0;
+       s.play().catch(() => {});
+     }
+
+     Wire mute/unmute inside Poki.commercialBreak():
+       PokiSDK.commercialBreak(() => { playSound off / mute all })
+       .then(() => { unmute all })
+  ════════════════════════════════════════════════════════════ */
+
+  </script>
+</body>
+</html>
