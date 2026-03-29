@@ -1066,7 +1066,7 @@ document.getElementById('next-btn').addEventListener('click', () => {
 document.querySelectorAll('.overlay').forEach(ov => {
   ov.addEventListener('click', e => {
     if (e.target !== ov) return;
-    if (ov.id === 'omt-overlay') return;
+    if (ov.id === 'omt-overlay' || ov.id === 'end-overlay') return;
     closeOverlay(ov.id);
     if (ov.id === 'tut-overlay') clearTutorialCue();
   });
