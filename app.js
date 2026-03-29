@@ -1,7 +1,7 @@
 'use strict';
 
 /* ═══════════════════════════════════════════════════════════════════
-   WORD DATABASE — 680+ curated common 5-letter words
+  WORD DATABASE — core curated list + optional extra common words file
    No external API needed. Self-contained for Poki compliance.
    ANSWERS  = pool of possible target words
    ALLOWED  = extra valid guesses (not used as targets)
@@ -128,8 +128,20 @@ const ALLOWED_EXTRA = [
   "WINDY","WISPY","WITTY","WORMY","WOOZY","YUCKY","ZIPPY","ZLOTY","ZINGY"
 ];
 
-/* Union for validation */
-const VALID_SET = new Set([...ANSWERS, ...ALLOWED_EXTRA]);
+const APP_VERSION = (document.querySelector('meta[name="game-version"]')?.content || '1.2.0').trim();
+
+function normalizeWordList(words) {
+  if (!Array.isArray(words)) return [];
+  return [...new Set(
+    words
+      .map(w => String(w || '').trim().toUpperCase())
+      .filter(w => /^[A-Z]{5}$/.test(w))
+  )];
+}
+
+const EXTRA_COMMON_WORDS = normalizeWordList(window.EXTRA_COMMON_WORDS);
+const TARGET_POOL = normalizeWordList([...ANSWERS, ...EXTRA_COMMON_WORDS]);
+const VALID_SET = new Set(normalizeWordList([...TARGET_POOL, ...ALLOWED_EXTRA]));
 
 /* ═══════════════════════════════════════════════════════════════════
    POKI SDK WRAPPER
@@ -190,7 +202,7 @@ const Poki = {
   },
 
   /* ── Rewarded break (player opts in for reward) ──
-     Places: Hint button, One More Try, Show Me The Word
+      Places: Hint button, One More Try, Skip Current Word
      success = true means player watched ad → grant reward
   ── */
   rewarded(cb) {
@@ -287,7 +299,8 @@ const G = {
   target:      '',
   guesses:     [],      // array of { word, result }
   row:         0,       // 0-5 (or 6 if extra try)
-  input:       '',
+  rowLetters:  Array(5).fill(''),
+  lockedHintCols: new Set(),
   over:        false,
   won:         false,
   maxRows:     6,
@@ -295,6 +308,30 @@ const G = {
   sdkStarted:  false,   // gameplayStart called this round?
   extraUsed:   false,   // One More Try consumed
 };
+
+function resetCurrentRowState() {
+  G.rowLetters = Array(5).fill('');
+  G.lockedHintCols = new Set();
+}
+
+function rowIsComplete() {
+  return G.rowLetters.every(Boolean);
+}
+
+function currentGuess() {
+  return G.rowLetters.join('');
+}
+
+function firstEmptyCol() {
+  return G.rowLetters.findIndex(ch => !ch);
+}
+
+function lastEditableFilledCol() {
+  for (let i = 4; i >= 0; i--) {
+    if (G.rowLetters[i] && !G.lockedHintCols.has(i)) return i;
+  }
+  return -1;
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    BOARD  — DOM helpers
@@ -314,6 +351,7 @@ function buildBoard() {
       tiles[r][c] = t;
     }
   }
+  applyResponsiveLayout();
 }
 
 const KEYS = [
@@ -328,6 +366,7 @@ function buildKeyboard() {
     el.innerHTML = '';
     row.forEach(k => {
       const btn = document.createElement('button');
+      btn.type = 'button';
       btn.className = 'key' + (k.length > 1 ? ' wide' : '');
       btn.textContent = k;
       btn.dataset.key = k;
@@ -335,16 +374,40 @@ function buildKeyboard() {
       el.appendChild(btn);
     });
   });
+  applyResponsiveLayout();
+}
+
+function applyResponsiveLayout() {
+  const board = document.getElementById('board');
+  const header = document.getElementById('header');
+  const keyboard = document.getElementById('keyboard');
+  if (!board || !header || !keyboard) return;
+
+  const rows = Math.max(tiles.length || 0, G.maxRows, 6);
+  const gap = window.innerHeight <= 620 ? 4 : 5;
+  const widthCap = Math.min(window.innerWidth, 520);
+  const byWidth = (widthCap - 20 - (gap * 4)) / 5;
+
+  const headerH = header.offsetHeight || 54;
+  const keyboardH = keyboard.offsetHeight || 168;
+  const usableH = window.innerHeight - headerH - keyboardH - 24;
+  const byHeight = (usableH - (gap * (rows - 1))) / rows;
+
+  const tile = Math.max(30, Math.floor(Math.min(byWidth, byHeight, 72)));
+  board.style.gap = `${gap}px`;
+  board.style.setProperty('--tile-dyn', `${tile}px`);
+  board.style.gridTemplateColumns = 'repeat(5, var(--tile-dyn))';
+  board.style.gridTemplateRows = `repeat(${rows}, var(--tile-dyn))`;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
    GAME LOGIC
 ═══════════════════════════════════════════════════════════════════ */
 function newGame() {
-  G.target     = ANSWERS[Math.floor(Math.random() * ANSWERS.length)];
+  G.target     = TARGET_POOL[Math.floor(Math.random() * TARGET_POOL.length)];
   G.guesses    = [];
   G.row        = 0;
-  G.input      = '';
+  resetCurrentRowState();
   G.over       = false;
   G.won        = false;
   G.maxRows    = 6;
@@ -355,11 +418,17 @@ function newGame() {
   buildBoard();
   buildKeyboard();
   resetPosDots();
+  stopCountdown();
   closeAllOverlays();
+  applyResponsiveLayout();
 }
 
 function onKey(k) {
-  if (G.over || Poki.adRunning) return;
+  if (G.over || Poki.adRunning || isOverlayOpen()) return;
+
+  if (document.activeElement?.tagName === 'BUTTON') {
+    document.activeElement.blur();
+  }
 
   if (k === 'ENTER')        submitGuess();
   else if (k === '⌫')       deleteLetter();
@@ -367,7 +436,7 @@ function onKey(k) {
 }
 
 function typeLetter(letter) {
-  if (G.input.length >= 5) return;
+  if (rowIsComplete()) return;
 
   /* POKI SDK: fire gameplayStart on player's first input each round */
   if (!G.sdkStarted) {
@@ -375,30 +444,35 @@ function typeLetter(letter) {
     Poki.playStart();
   }
 
-  G.input += letter;
-  const t = tiles[G.row][G.input.length - 1];
+  const col = firstEmptyCol();
+  if (col === -1) return;
+  G.rowLetters[col] = letter;
+
+  const t = tiles[G.row][col];
   t.textContent = letter;
   t.classList.add('filled', 'pop');
   t.addEventListener('animationend', () => t.classList.remove('pop'), { once: true });
 }
 
 function deleteLetter() {
-  if (!G.input.length) return;
-  const col = G.input.length - 1;
-  G.input = G.input.slice(0, -1);
+  const col = lastEditableFilledCol();
+  if (col === -1) return;
+
+  G.rowLetters[col] = '';
   const t = tiles[G.row][col];
   t.textContent = '';
-  t.classList.remove('filled');
+  t.classList.remove('filled', 'hint-rev');
 }
 
 function submitGuess() {
-  if (G.input.length < 5) { showToast('NOT ENOUGH LETTERS'); shakeRow(G.row); return; }
-  if (!VALID_SET.has(G.input))    { showToast('NOT IN WORD LIST');  shakeRow(G.row); return; }
+  const guess = currentGuess();
+  if (!rowIsComplete())      { showToast('NOT ENOUGH LETTERS'); shakeRow(G.row); return; }
+  if (!VALID_SET.has(guess)) { showToast('NOT IN WORD LIST');  shakeRow(G.row); return; }
 
-  const result = evaluate(G.input, G.target);
-  G.guesses.push({ word: G.input, result });
-  revealRow(G.row, G.input, result, () => {
-    syncKeyColors(G.input, result);
+  const result = evaluate(guess, G.target);
+  G.guesses.push({ word: guess, result });
+  revealRow(G.row, guess, result, () => {
+    syncKeyColors(guess, result);
     updatePosDots(result);
 
     const won  = result.every(r => r === 'green');
@@ -429,7 +503,7 @@ function submitGuess() {
       }
     } else {
       G.row++;
-      G.input = '';
+      resetCurrentRowState();
     }
   });
 }
@@ -478,7 +552,7 @@ function revealRow(row, word, result, done) {
       t.classList.add('flip');
       /* Apply colour at mid-flip (tile faces away from player) */
       setTimeout(() => {
-        t.classList.remove('filled');
+        t.classList.remove('filled', 'hint-rev');
         t.classList.add(state);
       }, FLIP_STEP * 0.78);
       if (col === 4) setTimeout(done, FLIP_STEP * 4 + 250);
@@ -567,25 +641,81 @@ function closeAllOverlays() {
   document.querySelectorAll('.overlay.open').forEach(el => el.classList.remove('open'));
 }
 
+function isOverlayOpen() {
+  return !!document.querySelector('.overlay.open');
+}
+
+function setTutorialGlow(on) {
+  const btn = document.getElementById('tutorial-btn');
+  if (btn) btn.classList.toggle('tutorial-glow', !!on);
+}
+
+function showStartupTutorial() {
+  setTutorialGlow(true);
+  openOverlay('tut-overlay');
+}
+
+function clearTutorialCue() {
+  setTutorialGlow(false);
+}
+
 /* ─── HINT  (rewarded ad → reveal one unknown letter) ─── */
 function requestHint() {
   if (G.over || Poki.adRunning) return;
+
+  if (rowIsComplete()) {
+    showToast('ROW IS FULL');
+    return;
+  }
+
   /* POKI SDK: rewardedBreak for hint */
   Poki.rewarded(success => {
-    if (!success) return;
+    if (!success) {
+      if (Poki.ready) showToast('AD COULD NOT PLAY');
+      return;
+    }
+
     const unknown = [];
     for (let c = 0; c < 5; c++) {
-      if (posState[c] !== 'green') unknown.push(c);
+      if (!G.rowLetters[c] && posState[c] !== 'green') unknown.push(c);
     }
-    if (!unknown.length) { showToast('ALL FOUND!'); return; }
+
+    if (!unknown.length) {
+      for (let c = 0; c < 5; c++) {
+        if (!G.rowLetters[c]) unknown.push(c);
+      }
+    }
+
+    if (!unknown.length) { showToast('ROW IS FULL'); return; }
+
     const pos = unknown[Math.floor(Math.random() * unknown.length)];
     const letter = G.target[pos];
+
+    G.rowLetters[pos] = letter;
+    G.lockedHintCols.add(pos);
+
     // Reveal in current active row
     const t = tiles[G.row][pos];
     t.textContent = letter;
     t.classList.add('filled', 'hint-rev');
     G.hintPos = pos;
     showToast(`HINT: ${letter} is at position ${pos + 1}`);
+  });
+}
+
+/* ─── SKIP WORD (rewarded ad) ─── */
+function requestSkipWord() {
+  if (G.over || Poki.adRunning) return;
+
+  Poki.rewarded(success => {
+    if (!success && Poki.ready) {
+      showToast('AD COULD NOT PLAY');
+      return;
+    }
+
+    Poki.playStop();
+    showToast(`SKIPPED: ${G.target}`, 1400);
+    setTimeout(() => newGame(), 320);
   });
 }
 
@@ -658,12 +788,12 @@ function grantExtraTry() {
   G.maxRows  = 7;
   G.extraUsed = true;
   G.row++;
-  G.input    = '';
+  resetCurrentRowState();
   /* Add an extra tile row if needed */
   if (tiles.length < 7) {
     const board = document.getElementById('board');
     /* Resize grid */
-    board.style.gridTemplateRows = `repeat(7, var(--tile))`;
+    board.style.gridTemplateRows = 'repeat(7, var(--tile-dyn))';
     tiles[6] = [];
     for (let c = 0; c < 5; c++) {
       const t = document.createElement('div');
@@ -672,6 +802,7 @@ function grantExtraTry() {
       tiles[6][c] = t;
     }
   }
+  applyResponsiveLayout();
   showToast('ONE MORE TRY!', 900);
   /* SDK: resume gameplay */
   Poki.playStart();
@@ -686,9 +817,14 @@ function showEndScreen(won) {
       t.textContent = '';
       t.classList.remove('revealed','revealed-y');
     });
-    if (G.hintPos >= 0) {
+    if (won && G.hintPos >= 0) {
       const hTile = container.querySelector(`.ht[data-p="${G.hintPos}"]`);
       if (hTile) { hTile.textContent = G.target[G.hintPos]; hTile.classList.add('revealed'); }
+    } else if (!won) {
+      container.querySelectorAll('.ht').forEach((t, i) => {
+        t.textContent = G.target[i];
+        t.classList.add('revealed');
+      });
     }
   }
 
@@ -696,8 +832,11 @@ function showEndScreen(won) {
   title.textContent = won ? 'YOU WIN!' : 'FAILED';
   title.style.color = won ? 'var(--clr-green)' : 'var(--text)';
 
-  const showBtn = document.getElementById('show-word-btn');
-  showBtn.style.display = won ? 'none' : 'flex';
+  const answerEl = document.getElementById('answer-text');
+  if (answerEl) {
+    answerEl.textContent = won ? '' : `WORD: ${G.target}`;
+    answerEl.style.display = won ? 'none' : 'block';
+  }
 
   renderStats();
   openOverlay('end-overlay');
@@ -816,6 +955,8 @@ function runLoader() {
       Poki.commercial(() => {
         document.getElementById('loading-screen').style.display = 'none';
         document.getElementById('game').classList.add('visible');
+        applyResponsiveLayout();
+        setTimeout(showStartupTutorial, 180);
       });
     }, 300);
   }, 1600);
@@ -825,11 +966,19 @@ function runLoader() {
    PHYSICAL KEYBOARD
 ═══════════════════════════════════════════════════════════════════ */
 document.addEventListener('keydown', e => {
-  /* POKI REQUIREMENT: prevent page scroll on arrow/space keys */
-  if ([' ','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
+  /* POKI REQUIREMENT: prevent page scroll and accidental default button actions */
+  if ([' ','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter','Backspace'].includes(e.key)) {
     e.preventDefault();
   }
+
   if (Poki.adRunning) return;
+  if (isOverlayOpen()) {
+    if (e.key === 'Escape') {
+      closeAllOverlays();
+      clearTutorialCue();
+    }
+    return;
+  }
 
   if (e.key === 'Enter')               onKey('ENTER');
   else if (e.key === 'Backspace')      onKey('⌫');
@@ -842,15 +991,32 @@ document.addEventListener('keydown', e => {
 
 /* Dismiss via data-dismiss attribute */
 document.querySelectorAll('[data-dismiss]').forEach(btn => {
-  btn.addEventListener('click', () => closeOverlay(btn.dataset.dismiss));
+  btn.addEventListener('click', () => {
+    const id = btn.dataset.dismiss;
+    closeOverlay(id);
+    if (id === 'tut-overlay') clearTutorialCue();
+    btn.blur();
+  });
 });
 
 /* Header buttons */
-document.getElementById('hint-btn').addEventListener('click', requestHint);
-document.getElementById('tutorial-btn').addEventListener('click', () => openOverlay('tut-overlay'));
+document.getElementById('hint-btn').addEventListener('click', e => {
+  e.currentTarget.blur();
+  requestHint();
+});
+document.getElementById('skip-btn').addEventListener('click', e => {
+  e.currentTarget.blur();
+  requestSkipWord();
+});
+document.getElementById('tutorial-btn').addEventListener('click', e => {
+  e.currentTarget.blur();
+  clearTutorialCue();
+  openOverlay('tut-overlay');
+});
 document.getElementById('settings-btn').addEventListener('click', () => {
   Settings._apply();
   openOverlay('set-overlay');
+  document.getElementById('settings-btn').blur();
 });
 
 /* Settings toggles */
@@ -860,6 +1026,7 @@ document.getElementById('tog-se').addEventListener('change', e => Settings.setSe
 
 /* One More Try buttons */
 document.getElementById('omt-yes-btn').addEventListener('click', () => {
+  document.getElementById('omt-yes-btn').blur();
   stopCountdown();
   /* POKI SDK: rewardedBreak for "One More Try" */
   Poki.rewarded(success => {
@@ -880,31 +1047,16 @@ document.getElementById('omt-yes-btn').addEventListener('click', () => {
 });
 
 document.getElementById('omt-no-btn').addEventListener('click', () => {
+  document.getElementById('omt-no-btn').blur();
   stopCountdown();
   closeOverlay('omt-overlay');
   Stats.record(false, G.row + 1);
   showEndScreen(false);
 });
 
-/* Show me the word (rewarded ad) */
-document.getElementById('show-word-btn').addEventListener('click', () => {
-  /* POKI SDK: rewardedBreak to reveal full target word */
-  Poki.rewarded(success => {
-    if (success || !Poki.ready) {
-      showToast(`WORD: ${G.target}`, 3500);
-      /* Reveal all hint tiles */
-      const container = document.getElementById('end-tiles');
-      container.querySelectorAll('.ht').forEach((t, i) => {
-        t.textContent = G.target[i];
-        t.classList.add('revealed');
-      });
-      document.getElementById('show-word-btn').style.display = 'none';
-    }
-  });
-});
-
 /* NEXT WORD button — POKI commercial break before new game */
 document.getElementById('next-btn').addEventListener('click', () => {
+  document.getElementById('next-btn').blur();
   closeOverlay('end-overlay');
   /* POKI SDK: commercialBreak between games (user-triggered) */
   Poki.commercial(() => newGame());
@@ -913,13 +1065,22 @@ document.getElementById('next-btn').addEventListener('click', () => {
 /* Close overlay on backdrop click */
 document.querySelectorAll('.overlay').forEach(ov => {
   ov.addEventListener('click', e => {
-    if (e.target === ov) closeOverlay(ov.id);
+    if (e.target !== ov) return;
+    if (ov.id === 'omt-overlay') return;
+    closeOverlay(ov.id);
+    if (ov.id === 'tut-overlay') clearTutorialCue();
   });
 });
 
 /* ═══════════════════════════════════════════════════════════════════
    BOOT
 ═══════════════════════════════════════════════════════════════════ */
+const versionLabel = document.getElementById('ver-label');
+if (versionLabel) versionLabel.textContent = `ver.${APP_VERSION}`;
+
+window.addEventListener('resize', applyResponsiveLayout);
+window.addEventListener('orientationchange', () => setTimeout(applyResponsiveLayout, 80));
+
 Poki.init().then(() => {
   Settings.load();
   Stats.load();

@@ -48,6 +48,9 @@
   --btn-next:    #c4a100;
   --btn-show:    #cc4444;
 
+  /* Dynamic board tile size (updated by JS) */
+  --tile-dyn:    62px;
+
   /* Type faces */
   --ff-head:   'Arial Black', 'Helvetica Neue', Arial, sans-serif;
   --ff-body:   'Helvetica Neue', Arial, sans-serif;
@@ -183,6 +186,7 @@ button {
   display: none;
   height: 100dvh;
   height: 100vh; /* fallback */
+  min-height: 100dvh;
   max-height: 100vh;
   flex-direction: column;
   align-items: center;
@@ -249,6 +253,22 @@ button {
 }
 .ibtn:active { background: var(--border); }
 
+@keyframes tbtn-glow {
+  0%, 100% {
+    transform: translateY(0);
+    box-shadow: 0 0 0 0 rgba(196, 161, 0, 0);
+  }
+  50% {
+    transform: translateY(-1px);
+    box-shadow: 0 0 0 5px rgba(196, 161, 0, .24);
+  }
+}
+
+.ibtn.tutorial-glow {
+  border-color: var(--clr-yellow);
+  animation: tbtn-glow 1.2s ease-in-out infinite;
+}
+
 .ibtn-badge {
   position: absolute;
   top: -3px;
@@ -298,16 +318,13 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6px;
+  padding: 8px 10px;
   min-height: 0;
   width: 100%;
 }
 
 #board {
-  --tile: min(
-    calc((100vw - 32px) / 5),
-    calc((100dvh - 54px - 168px - 20px) / 6)
-  );
+  --tile: var(--tile-dyn);
   display: grid;
   grid-template-columns: repeat(5, var(--tile));
   grid-template-rows: repeat(6, var(--tile));
@@ -374,26 +391,27 @@ button {
   flex-shrink: 0;
   width: 100%;
   max-width: 520px;
-  padding: 4px 6px;
+  padding: 4px 8px;
   padding-bottom: max(6px, env(safe-area-inset-bottom));
 }
 
 .krow {
   display: flex;
   justify-content: center;
-  gap: 4px;
+  gap: 3px;
   margin-bottom: 4px;
 }
 
 .key {
-  flex: 1;
-  height: clamp(38px, 6.5vw, 50px);
-  max-width: 38px;
+  flex: 1 1 0;
+  min-width: 0;
+  height: clamp(40px, 7.6vw, 52px);
+  max-width: none;
   background: var(--key-bg);
   border-radius: 4px;
   color: var(--key-text);
   font-family: var(--ff-body);
-  font-size: clamp(.58rem, 1.8vw, .82rem);
+  font-size: clamp(.62rem, 2.2vw, .9rem);
   font-weight: 700;
   text-transform: uppercase;
   display: flex;
@@ -403,7 +421,12 @@ button {
   padding: 0;
   transition: background .12s, color .12s;
 }
-.key.wide { max-width: 54px; font-size: clamp(.5rem, 1.5vw, .72rem); }
+.key.wide {
+  flex: 1.55 1 0;
+  max-width: none;
+  font-size: clamp(.55rem, 1.8vw, .78rem);
+  letter-spacing: .03em;
+}
 .key:active { filter: brightness(.8); }
 .key.green  { background: var(--clr-green);  color: #fff; }
 .key.yellow { background: var(--clr-yellow); color: #fff; }
@@ -697,20 +720,14 @@ button {
   color: var(--text);
 }
 
-.show-word-btn {
-  background: var(--btn-show);
-  color: #fff;
-  border-radius: 5px;
-  padding: 9px 20px;
-  font-size: .82rem;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: none;
-  cursor: pointer;
+.answer-text {
+  min-height: 18px;
+  font-family: var(--ff-head);
+  font-size: .85rem;
+  letter-spacing: .09em;
+  color: var(--btn-omt);
+  text-transform: uppercase;
 }
-.show-word-btn:active { filter: brightness(.88); }
 
 /* Stats box */
 .stats-box {
@@ -829,15 +846,29 @@ button {
   #header, #board-wrap, #keyboard {
     max-width: 500px;
   }
-  #board {
-    --tile: min(64px, calc((100dvh - 54px - 168px - 20px) / 6));
+}
+
+@media (max-width: 420px) {
+  #header {
+    padding: 0 10px;
+  }
+  .hdr-right {
+    gap: 4px;
+  }
+  .ibtn {
+    width: 34px;
+    height: 34px;
+  }
+  .logo {
+    font-size: clamp(1rem, 4.2vw, 1.25rem);
   }
 }
 
 /* Very small phones */
 @media (max-height: 580px) {
   #header { height: 48px; }
-  .key { height: 34px; }
+  .key { height: 36px; }
+  .key.wide { font-size: .62rem; }
   #board { gap: 4px; }
   .krow { margin-bottom: 3px; }
 }
