@@ -1,2 +1,2 @@
 wordle game 
-link - https://madhavraj840.github.io/WORDLE/wordle gameer
+link - https://madhavraj840.github.io/WORDLE/wordle 
